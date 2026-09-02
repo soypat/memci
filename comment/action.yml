@@ -1,0 +1,55 @@
+name: memci comment
+description: Post a memci report to its pull request, updating the previous comment in place.
+
+# Runs from a workflow_run trigger in the base repo's context, where the token
+# can write. It never checks out or executes PR code; it only consumes the
+# report artifact as inert data.
+
+inputs:
+  run-id:
+    description: The workflow run that produced the report.
+    required: true
+  token:
+    description: Token with pull-requests write permission.
+    default: ${{ github.token }}
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.1
+      with:
+        name: memci-report
+        path: ${{ runner.temp }}/memci
+        run-id: ${{ inputs.run-id }}
+        github-token: ${{ inputs.token }}
+
+    - shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        REPO: ${{ github.repository }}
+        PR: ${{ github.event.workflow_run.pull_requests[0].number }}
+        HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+      run: |
+        set -euo pipefail
+        report="${RUNNER_TEMP}/memci/memci-report.md"
+        marker="$(head -n1 "$report")"
+
+        # The artifact was produced by a job that ran PR code, so check it looks
+        # like a memci report and is small enough to be a comment before posting.
+        case "$marker" in '<!--'*'-->') ;; *) echo "::error::not a memci report"; exit 1;; esac
+        [ "$(wc -c < "$report")" -le 65536 ] || { echo "::error::report too large to post"; exit 1; }
+
+        # workflow_run does not always populate pull_requests, notably for forks.
+        pr="${PR:-$(gh api "repos/${REPO}/commits/${HEAD_SHA}/pulls" \
+          --jq 'map(select(.state == "open")) | .[0].number // empty')}"
+        [ -n "$pr" ] || { echo "No open PR for ${HEAD_SHA}; nothing to comment."; exit 0; }
+
+        id="$(gh api "repos/${REPO}/issues/${pr}/comments" --paginate \
+          --jq ".[] | select(.body | startswith(\"${marker}\")) | .id" | head -n1)"
+        if [ -n "$id" ]; then
+          jq -n --rawfile body "$report" '{body: $body}' |
+            gh api --method PATCH "repos/${REPO}/issues/comments/${id}" --input -
+        else
+          jq -n --rawfile body "$report" '{body: $body}' |
+            gh api --method POST "repos/${REPO}/issues/${pr}/comments" --input -
+        fi

@@ -1,0 +1,83 @@
+# Ignore files with no extensions trick:
+# First ignore all.
+*
+# Unignore directories since they usually have no extensions
+!*/
+# Unignore all with extensions.
+!*.*
+!LICENSE
+
+# Go workspaces.
+go.work
+go.work.sum
+# Test binary, built with `go test -c`
+*.test
+# Test coverage profiles.
+profiles/
+
+# Dependency directories after running `go mod vendor`
+vendor/
+
+# Wifi credentials
+*.credentials
+
+# Binaries for programs and plugins
+*.elf
+*.uf2
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.hex
+*.wasm
+/http-linux
+# Profiling
+*.pprof
+
+# example binaries.
+/tap
+/httptap
+/xcurl
+/xnet
+/httpclient
+/httpserver
+**/local*
+/stack
+**__debug_bin*
+# `__debug_bin` Debug binary generated in VSCode when using the built-in debugger.
+*bin
+/gen-binary-bench
+
+/bridge
+# IDE
+.vscode/
+agents.md
+*skill.md
+
+# For local development and testing create `local` directories.
+local
+*.local
+*local.md
+
+# Output of the go coverage tool, specifically when used with LiteIDE
+*.out
+*.cov
+
+# Log files and common data formats.
+*.log
+*.Log
+*.LOG
+*.csv
+*.tsv
+*.dat
+*.json
+*.xlsx
+*.xls
+*.zip
+*.gz
+*.tar
+*.txt
+
+# If running a python script.
+*/__pycache__/*

@@ -1,0 +1,49 @@
+name: memci
+description: Report benchmark allocation and binary size changes against the base branch.
+
+# Runs in the pull request's context and so must be treated as untrusted: it
+# builds and runs PR code. It takes no write permissions and only produces an
+# artifact. Posting that to the PR is memci/comment's job.
+
+inputs:
+  args:
+    description: Flags for memci. Run memci -h for the list.
+    default: -targets ./...
+  bindiff:
+    description: Module version of bindiff to install, or a command to run.
+    default: github.com/soypat/tinyboot/cmd/bindiff@latest
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        BASE: ${{ github.event.pull_request.base.ref || github.event.repository.default_branch }}
+        HEAD: ${{ github.head_ref || github.ref_name }}
+        ARGS: ${{ inputs.args }}
+        BINDIFF: ${{ inputs.bindiff }}
+      run: |
+        set -euo pipefail
+        git fetch --no-tags --depth=1 origin "+refs/heads/${BASE}:refs/memci/base"
+        git worktree add --detach "${RUNNER_TEMP}/base" refs/memci/base
+        # Build memci from this action's own checkout so the tool and the action
+        # version cannot drift apart.
+        (cd "${GITHUB_ACTION_PATH}" && go build -o "${RUNNER_TEMP}/memci" .)
+        if [ "${BINDIFF}" != "${BINDIFF#*@}" ]; then
+          GOBIN="${RUNNER_TEMP}" go install "${BINDIFF}"
+          BINDIFF="${RUNNER_TEMP}/bindiff"
+        fi
+        "${RUNNER_TEMP}/memci" -base "${RUNNER_TEMP}/base" \
+          -base-ref "${BASE}" -head-ref "${HEAD}" -bindiff "${BINDIFF}" \
+          ${ARGS} -o "${RUNNER_TEMP}/memci-report.md"
+
+    - if: always()
+      shell: bash
+      run: cat "${RUNNER_TEMP}/memci-report.md" >> "${GITHUB_STEP_SUMMARY}"
+
+    - if: always()
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      with:
+        name: memci-report
+        path: ${{ runner.temp }}/memci-report.md
+        if-no-files-found: warn
