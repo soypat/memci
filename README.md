@@ -5,9 +5,12 @@ Reports what a pull request did to your **benchmark allocations** and your
 empty report means nothing got worse.
 
 ```
-#### Binary size
+# Size and Allocations `add-json-encoding` vs. `main`
 
-Total +258.52 KiB: `httpsrv` +258.52 KiB.
+Binary size +258.52 KiB: `httpsrv` +258.52 KiB. Allocations +1 allocs/op, +72 B/op across 1 benchmark.
+
+<details>
+<summary>Breakdown by package</summary>
 
 **httpsrv — +258.52 KiB**
 
@@ -16,7 +19,7 @@ Total +258.52 KiB: `httpsrv` +258.52 KiB.
 | encoding/json | — | 57.71 KiB | +57.71 KiB | new |
 | slices | 68.01 KiB | 101.46 KiB | +33.45 KiB | +49.2% |
 
-#### Benchmark allocations
+</details>
 
 **allocs/op**
 
@@ -25,8 +28,20 @@ Total +258.52 KiB: `httpsrv` +258.52 KiB.
 | . | BenchmarkGreet | 1 | 2 | +1 | +100.0% |
 ```
 
+When nothing moved, that is the whole comment:
+
+```
+# Size and Allocations `add-json-encoding` vs. `main`
+
+No change across 1 binary and 12 benchmarks.
+```
+
+The title, one sentence, then the numbers. What moved and by how much stays in
+front of the fold; which package it came from is one click down, so a repo with
+a dozen binaries still opens with an answer rather than with a wall of tables.
+
 With `-tinygo`, every binary is built by both toolchains and the totals sit next
-to each other.
+to each other, above the same fold.
 
 
 It deliberately does not report `ns/op`. Timings measure the runner; `B/op`,

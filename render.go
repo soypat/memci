@@ -19,12 +19,42 @@ type table struct {
 	omitted int // Rows trimmed by -top, mentioned in a footer so the trim is visible.
 }
 
-// section holds the tables for one half of the report plus a headline that is
-// worth stating even when nothing changed underneath it.
+// section holds the tables for one half of the report plus the sentence that
+// stands in for them.
+//
+// A section has no heading of its own: the report is short enough that a
+// heading per half is a level of structure it does not need, and the tables
+// name themselves.
 type section struct {
-	heading  string
+	// headline is this half's clause of the paragraph under the title, stated
+	// even when nothing moved -- "the binary did not change size" is a result.
 	headline string
-	tables   []table
+	// scope is what the half measured, e.g. "2 binaries". It is used only when
+	// nothing anywhere changed, where the difference between "this change is
+	// free" and "the job measured nothing" is worth a few words.
+	scope  string
+	tables []table
+
+	// details holds the tables folded away behind a summary. What moved and by
+	// how much is the answer; which package it came from is the explanation,
+	// and a comment that opens with twenty package tables buries the answer in
+	// it. Everything is still there, one click down.
+	details        []table
+	detailsSummary string
+}
+
+// reportTitle names the report and, when the name does not already say it, the
+// line stating what was compared against what.
+//
+// The default title carries both revisions because the report is read as one
+// comment among many on a busy PR, and "which branch is this about" is the
+// first question it has to answer. A title someone chose with -title makes no
+// such promise, so the revisions keep their own line underneath it.
+func reportTitle(title, headRef, baseRef string) (string, string) {
+	if title != "" {
+		return title, fmt.Sprintf("`%s` compared against `%s`.", headRef, baseRef)
+	}
+	return fmt.Sprintf("Size and Allocations `%s` vs. `%s`", headRef, baseRef), ""
 }
 
 // render writes the whole Markdown report. marker is an HTML comment that lets
@@ -32,40 +62,64 @@ type section struct {
 // one each push.
 func render(w io.Writer, marker, title, subtitle string, sections []section) error {
 	var b strings.Builder
-	fmt.Fprintf(&b, "%s\n\n### %s\n\n", marker, title)
+	fmt.Fprintf(&b, "%s\n\n# %s\n\n", marker, title)
 	if subtitle != "" {
 		fmt.Fprintf(&b, "%s\n\n", subtitle)
 	}
 
-	any := false
+	// The halves are rendered first so that the paragraph under the title can
+	// say something different when none of them found anything.
+	var body strings.Builder
+	var headlines, scopes []string
 	for _, s := range sections {
-		rendered := s.render(&b)
-		any = any || rendered
+		s.render(&body)
+		if s.headline != "" {
+			headlines = append(headlines, s.headline)
+		}
+		if s.scope != "" {
+			scopes = append(scopes, s.scope)
+		}
 	}
-	if !any {
-		b.WriteString("No change in binary size or benchmark allocations.\n")
+	switch {
+	case body.Len() == 0 && len(scopes) > 0:
+		fmt.Fprintf(&b, "No change across %s.\n", strings.Join(scopes, " and "))
+	case body.Len() == 0:
+		b.WriteString("No change.\n")
+	default:
+		if len(headlines) > 0 {
+			fmt.Fprintf(&b, "%s\n\n", strings.Join(headlines, " "))
+		}
+		b.WriteString(body.String())
 	}
 	_, err := io.WriteString(w, b.String())
 	return err
 }
 
-// render writes a section and reports whether it contributed anything. A
-// section with a headline is worth printing even with no tables under it: "the
-// binary did not change size" is a result.
-func (s section) render(b *strings.Builder) bool {
-	var body strings.Builder
+// render writes a section's tables, folded ones included. The headline is the
+// caller's business: every half contributes one clause to a single paragraph
+// rather than a block of its own.
+func (s section) render(b *strings.Builder) {
+	var body, folded strings.Builder
 	for _, t := range s.tables {
 		t.render(&body)
 	}
-	if body.Len() == 0 && s.headline == "" {
-		return false
+	for _, t := range s.details {
+		t.render(&folded)
 	}
-	fmt.Fprintf(b, "#### %s\n\n", s.heading)
-	if s.headline != "" {
-		fmt.Fprintf(b, "%s\n\n", s.headline)
+	if body.Len() == 0 && folded.Len() == 0 {
+		return
 	}
 	b.WriteString(body.String())
-	return true
+	if folded.Len() > 0 {
+		summary := s.detailsSummary
+		if summary == "" {
+			summary = "Breakdown"
+		}
+		// The blank lines around the body are load bearing: GitHub renders the
+		// Markdown inside a <details> only when it is separated from the tags,
+		// and without them the tables arrive as literal pipes.
+		fmt.Fprintf(b, "<details>\n<summary>%s</summary>\n\n%s</details>\n\n", summary, folded.String())
+	}
 }
 
 func (t table) render(b *strings.Builder) {
@@ -117,7 +171,9 @@ func (t table) side(v float64, ok bool) string {
 func writeRow(b *strings.Builder, cells []string) {
 	b.WriteString("|")
 	for _, c := range cells {
-		b.WriteString(" " + c + " |")
+		b.WriteString(" ")
+		b.WriteString(c)
+		b.WriteString(" |")
 	}
 	b.WriteString("\n")
 }

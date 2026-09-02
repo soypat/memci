@@ -82,7 +82,7 @@ func run() error {
 	flag.Float64Var(&cfg.tolPct, "tol-pct", 1, "Ignore B/op changes smaller than this percentage.")
 	flag.IntVar(&cfg.top, "top", 25, "Show at most this many rows per table, largest changes first. 0 shows all.")
 	flag.Int64Var(&cfg.failOnGrowth, "fail-on-growth", -1, "Exit non-zero if total binary growth exceeds this many bytes. Negative disables.")
-	flag.StringVar(&cfg.title, "title", "Memory and size report", "Report heading.")
+	flag.StringVar(&cfg.title, "title", "", "Report heading. The default names the two revisions being compared.")
 	flag.StringVar(&cfg.marker, "marker", defaultMarker, "HTML marker embedded in the report so a commenter can update in place.")
 	flag.StringVar(&cfg.out, "o", "", "Write the report here instead of stdout.")
 	flag.BoolVar(&cfg.verbose, "v", false, "Log each command as it runs.")
@@ -110,8 +110,8 @@ func run() error {
 		defer f.Close()
 		out = f
 	}
-	subtitle := fmt.Sprintf("`%s` compared against `%s`.", cfg.headRef, cfg.baseRef)
-	if err := render(out, cfg.marker, cfg.title, subtitle, sections); err != nil {
+	title, subtitle := reportTitle(cfg.title, cfg.headRef, cfg.baseRef)
+	if err := render(out, cfg.marker, title, subtitle, sections); err != nil {
 		return err
 	}
 
@@ -204,7 +204,7 @@ func measureBench(cfg config) ([]section, error) {
 	allocShown, allocMore := trim(allocRows, cfg.top)
 	byteShown, byteMore := trim(byteRows, cfg.top)
 	sec := section{
-		heading: "Benchmark allocations",
+		scope: quantity(len(head), "benchmark", "benchmarks"),
 		tables: []table{
 			{heading: "allocs/op", group: "Package", item: "Benchmark",
 				format: trimFloat, rows: allocShown, omitted: allocMore},
@@ -212,10 +212,44 @@ func measureBench(cfg config) ([]section, error) {
 				format: trimFloat, rows: byteShown, omitted: byteMore},
 		},
 	}
-	if len(allocRows) == 0 && len(byteRows) == 0 {
-		sec.headline = fmt.Sprintf("No change across %s.", quantity(len(head), "benchmark", "benchmarks"))
-	}
+	sec.headline = allocHeadline(allocRows, byteRows)
 	return []section{sec}, nil
+}
+
+// allocHeadline states what the benchmarks did in one clause.
+//
+// The two figures are the net across the benchmarks that moved, which is a
+// severity indicator rather than a measurement of anything -- bytes per op do
+// not add up across different benchmarks -- so the sentence says how many
+// benchmarks it is summing over and the table below gives them one by one.
+func allocHeadline(allocRows, byteRows []Row) string {
+	changed := make(map[key]bool)
+	var netAllocs, netBytes float64
+	for _, r := range allocRows {
+		changed[key{r.Group, r.Name}] = true
+		netAllocs += r.Delta()
+	}
+	for _, r := range byteRows {
+		changed[key{r.Group, r.Name}] = true
+		netBytes += r.Delta()
+	}
+	if len(changed) == 0 {
+		return "Allocations unchanged."
+	}
+	var parts []string
+	if netAllocs != 0 {
+		parts = append(parts, signedBy(netAllocs, trimFloat)+" allocs/op")
+	}
+	if netBytes != 0 {
+		parts = append(parts, signedBy(netBytes, trimFloat)+" B/op")
+	}
+	across := quantity(len(changed), "benchmark", "benchmarks")
+	if len(parts) == 0 {
+		// Rises and falls that cancel out. The net is zero and the code still
+		// moved, so the count is the whole of what there is to say.
+		return fmt.Sprintf("Allocations changed across %s.", across)
+	}
+	return fmt.Sprintf("Allocations %s across %s.", strings.Join(parts, ", "), across)
 }
 
 // measureSize builds each target on both revisions with every toolchain and
@@ -227,7 +261,7 @@ func measureSize(cfg config, tcs []toolchain) (section, []growth, error) {
 	}
 	defer os.RemoveAll(dir)
 
-	sec := section{heading: "Binary size"}
+	var sec section
 	var growths []growth
 	var totalRows []Row // One per binary and toolchain, for the side by side table.
 	// The headline names binaries when there is one toolchain and toolchains
@@ -281,7 +315,7 @@ func measureSize(cfg config, tcs []toolchain) (section, []growth, error) {
 				continue
 			}
 			shown, more := trim(rows, cfg.top)
-			sec.tables = append(sec.tables, table{
+			sec.details = append(sec.details, table{
 				// The binary and the toolchain are named in the heading, so the
 				// rows need only name the unit of attribution.
 				heading: fmt.Sprintf("%s — %s", binaryLabel(name, tc, tcs), signedBy(float64(sum.Delta), humanBytes)),
@@ -295,21 +329,23 @@ func measureSize(cfg config, tcs []toolchain) (section, []growth, error) {
 		}
 	}
 
+	sec.scope = quantity(len(binaries), "binary", "binaries")
 	switch {
 	case len(summaries) == 0:
-		sec.headline = fmt.Sprintf("No change across %s.", quantity(len(binaries), "binary", "binaries"))
+		sec.headline = "Binary size unchanged."
 	case len(tcs) == 1:
-		sec.headline = fmt.Sprintf("Total %s: %s.", signedBy(float64(growths[0].bytes), humanBytes), strings.Join(summaries, ", "))
+		sec.headline = fmt.Sprintf("Binary size %s: %s.", signedBy(float64(growths[0].bytes), humanBytes), strings.Join(summaries, ", "))
 	default:
-		sec.headline = fmt.Sprintf("Total %s.", strings.Join(summaries, ", "))
+		sec.headline = fmt.Sprintf("Binary size: %s.", strings.Join(summaries, ", "))
 	}
 	// With one toolchain the totals are already in the headline; the table earns
 	// its space only when there is a second number to hold against the first.
 	if len(tcs) > 1 {
 		if t, ok := sideBySide(totalRows, tcs); ok {
-			sec.tables = append([]table{t}, sec.tables...)
+			sec.tables = append(sec.tables, t)
 		}
 	}
+	sec.detailsSummary = fmt.Sprintf("Breakdown by %s", cfg.kind)
 	return sec, growths, nil
 }
 

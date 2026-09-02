@@ -149,7 +149,7 @@ func TestEndToEndTinyGo(t *testing.T) {
 		"loadable image plus `.bss`",  // And the table says what it is counting.
 		"httpsrvfixture (go) —",       // Detail tables are qualified once there are two.
 		"httpsrvfixture (tinygo) —",
-		"Total go +", "tinygo +", // The headline carries both totals.
+		"Binary size: go +", "tinygo +", // The headline carries both totals.
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("report is missing %q:\n%s", want, got)
