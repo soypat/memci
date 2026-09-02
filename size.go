@@ -14,11 +14,17 @@ type bindiffReport struct {
 	Mode    string         `json:"mode"`
 	Kind    string         `json:"kind"`
 	Entries []bindiffEntry `json:"entries"`
-	Summary struct {
-		Old   int64 `json:"old"`
-		New   int64 `json:"new"`
-		Delta int64 `json:"delta"`
-	} `json:"summary"`
+	Summary bindiffSummary `json:"summary"`
+}
+
+// bindiffSummary is the whole-binary total. Delta is what a size budget is
+// applied to; Old and New are what the side by side table shows, since "grew by
+// 1 KiB" means something different on a 4 MiB host binary than on a 20 KiB
+// firmware image.
+type bindiffSummary struct {
+	Old   int64 `json:"old"`
+	New   int64 `json:"new"`
+	Delta int64 `json:"delta"`
 }
 
 type bindiffEntry struct {
@@ -45,13 +51,13 @@ func (e bindiffEntry) displayName() string {
 // bindiff already drops entries whose size did not move, so in practice every
 // entry here is a change; the rows still go through keep so that both halves of
 // the report obey exactly one rule about what is worth showing.
-func sizeRows(target string, raw []byte) ([]Row, int64, error) {
+func sizeRows(target string, raw []byte) ([]Row, bindiffSummary, error) {
 	var rep bindiffReport
 	if err := json.Unmarshal(raw, &rep); err != nil {
-		return nil, 0, fmt.Errorf("decoding bindiff output for %s: %w", target, err)
+		return nil, bindiffSummary{}, fmt.Errorf("decoding bindiff output for %s: %w", target, err)
 	}
 	if rep.Mode != "diff" {
-		return nil, 0, fmt.Errorf("bindiff report for %s has mode %q, want diff", target, rep.Mode)
+		return nil, bindiffSummary{}, fmt.Errorf("bindiff report for %s has mode %q, want diff", target, rep.Mode)
 	}
 	rows := make([]Row, 0, len(rep.Entries))
 	for _, e := range rep.Entries {
@@ -68,7 +74,7 @@ func sizeRows(target string, raw []byte) ([]Row, int64, error) {
 			headOK: e.New != 0,
 		})
 	}
-	return rows, rep.Summary.Delta, nil
+	return rows, rep.Summary, nil
 }
 
 // humanBytes renders a byte count at a readable scale. Size tables mix

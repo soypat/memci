@@ -20,12 +20,17 @@ const bindiffDiffJSON = `{
 }`
 
 func TestSizeRows(t *testing.T) {
-	rows, delta, err := sizeRows("httpsrv", []byte(bindiffDiffJSON))
+	rows, sum, err := sizeRows("httpsrv", []byte(bindiffDiffJSON))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if delta != 55935 {
-		t.Errorf("delta = %d, want the summary's 55935", delta)
+	if sum.Delta != 55935 {
+		t.Errorf("delta = %d, want the summary's 55935", sum.Delta)
+	}
+	// The totals table reports the sizes themselves, not just the change, so
+	// both ends of the summary have to survive the decode.
+	if sum.Old != 505678 || sum.New != 561613 {
+		t.Errorf("summary = %d -> %d, want 505678 -> 561613", sum.Old, sum.New)
 	}
 	if len(rows) != 4 {
 		t.Fatalf("got %d rows, want 4", len(rows))

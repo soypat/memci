@@ -12,6 +12,18 @@ inputs:
   bindiff:
     description: Module version of bindiff to install, or a command to run.
     default: github.com/soypat/tinyboot/cmd/bindiff@latest
+  tinygo:
+    # These are inputs of their own rather than part of args because args is
+    # word-split by the shell, and a target or a flag list cannot carry spaces
+    # through it. Install TinyGo in the workflow, e.g. with acifani/setup-tinygo.
+    description: TinyGo command to size the targets with as well. Empty skips TinyGo.
+    default: ""
+  tinygo-targets:
+    description: Package patterns to build with TinyGo. Defaults to the -targets in args.
+    default: ""
+  tinygo-flags:
+    description: Extra flags for tinygo build, e.g. -target=pico.
+    default: ""
 
 runs:
   using: composite
@@ -22,6 +34,9 @@ runs:
         HEAD: ${{ github.head_ref || github.ref_name }}
         ARGS: ${{ inputs.args }}
         BINDIFF: ${{ inputs.bindiff }}
+        TINYGO: ${{ inputs.tinygo }}
+        TINYGO_TARGETS: ${{ inputs.tinygo-targets }}
+        TINYGO_FLAGS: ${{ inputs.tinygo-flags }}
       run: |
         set -euo pipefail
         git fetch --no-tags --depth=1 origin "+refs/heads/${BASE}:refs/memci/base"
@@ -33,8 +48,21 @@ runs:
           GOBIN="${RUNNER_TEMP}" go install "${BINDIFF}"
           BINDIFF="${RUNNER_TEMP}/bindiff"
         fi
+        # An array so that a flag list with spaces stays one argument, and so
+        # that nothing at all is passed when TinyGo is not in use.
+        TINYGO_ARGS=()
+        if [ -n "${TINYGO}" ]; then
+          TINYGO_ARGS+=(-tinygo "${TINYGO}")
+          if [ -n "${TINYGO_TARGETS}" ]; then
+            TINYGO_ARGS+=(-tinygo-targets "${TINYGO_TARGETS}")
+          fi
+          if [ -n "${TINYGO_FLAGS}" ]; then
+            TINYGO_ARGS+=(-tinygo-flags "${TINYGO_FLAGS}")
+          fi
+        fi
         "${RUNNER_TEMP}/memci" -base "${RUNNER_TEMP}/base" \
           -base-ref "${BASE}" -head-ref "${HEAD}" -bindiff "${BINDIFF}" \
+          ${TINYGO_ARGS[@]+"${TINYGO_ARGS[@]}"} \
           ${ARGS} -o "${RUNNER_TEMP}/memci-report.md"
 
     - if: always()
