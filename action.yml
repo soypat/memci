@@ -67,7 +67,15 @@ runs:
 
     - if: always()
       shell: bash
-      run: cat "${RUNNER_TEMP}/memci-report.md" >> "${GITHUB_STEP_SUMMARY}"
+      run: |
+        # memci may have failed before writing anything. The step that failed
+        # has already said why; a second red X for a missing file only buries
+        # it, so the summary is written when there is one and skipped when not.
+        if [ -f "${RUNNER_TEMP}/memci-report.md" ]; then
+          cat "${RUNNER_TEMP}/memci-report.md" >> "${GITHUB_STEP_SUMMARY}"
+        else
+          echo "memci wrote no report; see the failure above." >> "${GITHUB_STEP_SUMMARY}"
+        fi
 
     - if: always()
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

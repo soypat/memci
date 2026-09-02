@@ -163,14 +163,15 @@ jobs:
       - uses: actions/checkout@v6
       - uses: actions/setup-go@v6
         with: { go-version: "1.26" }
-      # Only needed because tinygo is set below. TinyGo 0.42 supports Go 1.27
-      # and older; a TinyGo that predates the Go above will refuse to build.
+      # Only needed because tinygo is set below. Keep the two versions in step:
+      # TinyGo 0.42 builds with Go 1.25 through 1.27 and refuses to run outside
+      # that window, in either direction.
       - uses: acifani/setup-tinygo@v2
         with:
           tinygo-version: "0.42.0"
       - uses: soypat/memci@v1
         with:
-          args: -targets ./cmd/...
+          args: -targets ./cmd/... -kind package
           tinygo: tinygo
           tinygo-targets: ./cmd/firmware
           tinygo-flags: -target=pico
