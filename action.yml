@@ -8,21 +8,21 @@ description: Report benchmark allocation and binary size changes against the bas
 inputs:
   args:
     description: Flags for memci. Run memci -h for the list.
-    default: -targets ./...
+    default: ""
   bindiff:
     description: Module version of bindiff to install, or a command to run.
     default: github.com/soypat/tinyboot/cmd/bindiff@latest
-  tinygo:
-    # These are inputs of their own rather than part of args because args is
-    # word-split by the shell, and a target or a flag list cannot carry spaces
-    # through it. Install TinyGo in the workflow, e.g. with acifani/setup-tinygo.
-    description: TinyGo command to size the targets with as well. Empty skips TinyGo.
-    default: ""
-  tinygo-targets:
-    description: Package patterns to build with TinyGo. Defaults to the -targets in args.
-    default: ""
-  tinygo-flags:
-    description: Extra flags for tinygo build, e.g. -target=pico.
+  targets:
+    # An input of its own rather than part of args because args is word-split by
+    # the shell, which a JSON document does not survive. Any toolchain a build
+    # command names must be installed by the workflow, e.g. acifani/setup-tinygo.
+    description: |
+      Builds to size-profile: either a JSON array, or the path of a .json file
+      in the repo holding one. Each entry is one binary:
+        build - shell command, run from the root of each checkout
+        elf   - where build leaves the binary, relative to the checkout
+        name  - label in the report, defaults to the elf's base name
+        mem   - measure the loadable image plus .bss instead of the file
     default: ""
 
 runs:
@@ -34,9 +34,7 @@ runs:
         HEAD: ${{ github.head_ref || github.ref_name }}
         ARGS: ${{ inputs.args }}
         BINDIFF: ${{ inputs.bindiff }}
-        TINYGO: ${{ inputs.tinygo }}
-        TINYGO_TARGETS: ${{ inputs.tinygo-targets }}
-        TINYGO_FLAGS: ${{ inputs.tinygo-flags }}
+        TARGETS: ${{ inputs.targets }}
       run: |
         set -euo pipefail
         git fetch --no-tags --depth=1 origin "+refs/heads/${BASE}:refs/memci/base"
@@ -48,21 +46,18 @@ runs:
           GOBIN="${RUNNER_TEMP}" go install "${BINDIFF}"
           BINDIFF="${RUNNER_TEMP}/bindiff"
         fi
-        # An array so that a flag list with spaces stays one argument, and so
-        # that nothing at all is passed when TinyGo is not in use.
-        TINYGO_ARGS=()
-        if [ -n "${TINYGO}" ]; then
-          TINYGO_ARGS+=(-tinygo "${TINYGO}")
-          if [ -n "${TINYGO_TARGETS}" ]; then
-            TINYGO_ARGS+=(-tinygo-targets "${TINYGO_TARGETS}")
-          fi
-          if [ -n "${TINYGO_FLAGS}" ]; then
-            TINYGO_ARGS+=(-tinygo-flags "${TINYGO_FLAGS}")
-          fi
+        # An array so the JSON stays one argument. Without a list, every main
+        # package gets a host build; naming one replaces that rather than
+        # adding to it. Pass -targets in args to have both.
+        TARGET_ARGS=()
+        if [ -n "${TARGETS}" ]; then
+          TARGET_ARGS+=(-targets-json "${TARGETS}")
+        else
+          TARGET_ARGS+=(-targets ./...)
         fi
         "${RUNNER_TEMP}/memci" -base "${RUNNER_TEMP}/base" \
           -base-ref "${BASE}" -head-ref "${HEAD}" -bindiff "${BINDIFF}" \
-          ${TINYGO_ARGS[@]+"${TINYGO_ARGS[@]}"} \
+          ${TARGET_ARGS[@]+"${TARGET_ARGS[@]}"} \
           ${ARGS} -o "${RUNNER_TEMP}/memci-report.md"
 
     - if: always()

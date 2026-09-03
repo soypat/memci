@@ -26,11 +26,7 @@ jobs:
       # would leave the size half untested.
       - run: go install github.com/soypat/tinyboot/cmd/bindiff@latest
 
-      # Likewise for TinyGo: the two-toolchain report is only exercised when a
-      # tinygo is on PATH.
-      - uses: acifani/setup-tinygo@db56321a62b9a67922bb9ac8f9d085e218807bb3 # v2
-        with:
-          tinygo-version: "0.42.0"
-          install-binaryen: "false"
-
+      # No second toolchain is installed: memci runs whatever a target's build
+      # command says, so the multi-target report is exercised with two go
+      # builds that differ in their flags.
       - run: go test ./...

@@ -169,8 +169,8 @@ func TestRenderTitleIsTopLevel(t *testing.T) {
 	if err := render(&b, defaultMarker, title, subtitle, nil); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(b.String(), "\n# Size and Allocations `pr` vs. `main`\n") {
-		t.Errorf("the title is not a top level heading:\n%s", b.String())
+	if !strings.Contains(b.String(), "\n## Size and Allocations `pr` vs. `main`\n") {
+		t.Errorf("the title is not the report's own heading level:\n%s", b.String())
 	}
 }
 

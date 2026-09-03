@@ -22,7 +22,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -40,9 +39,7 @@ type config struct {
 	benchtime        string
 	testTimeout      string
 	targets          string
-	tinygo           string
-	tinygoTargets    string
-	tinygoFlags      string
+	targetsJSON      string
 	kind             string
 	bindiff          string
 	tolBytes         float64
@@ -72,10 +69,8 @@ func run() error {
 	flag.StringVar(&cfg.count, "count", "5", "Benchmark -count. Metrics are reported as the median of the runs.")
 	flag.StringVar(&cfg.benchtime, "benchtime", "1000x", "Benchmark -benchtime. A fixed iteration count keeps B/op comparable between revisions.")
 	flag.StringVar(&cfg.testTimeout, "timeout", "20m", "Benchmark -timeout.")
-	flag.StringVar(&cfg.targets, "targets", "", "Comma separated package patterns to build and size-profile. Empty skips binary sizes.")
-	flag.StringVar(&cfg.tinygo, "tinygo", "", "TinyGo command to build the targets with as well, e.g. \"tinygo\". Empty skips TinyGo.")
-	flag.StringVar(&cfg.tinygoTargets, "tinygo-targets", "", "Package patterns to build with TinyGo. Defaults to -targets.")
-	flag.StringVar(&cfg.tinygoFlags, "tinygo-flags", "", "Extra flags for tinygo build, e.g. \"-target=pico -opt=z\".")
+	flag.StringVar(&cfg.targets, "targets", "", "Comma separated package patterns to build with the host toolchain and size-profile.")
+	flag.StringVar(&cfg.targetsJSON, "targets-json", "", "JSON array of builds to size-profile, or the path of a .json file holding one. Each entry has build, elf and optionally name and mem.")
 	flag.StringVar(&cfg.kind, "kind", "package", "bindiff granularity for the size tables: segment, section, symbol, package, file or line.")
 	flag.StringVar(&cfg.bindiff, "bindiff", "bindiff", "bindiff command, run from the head directory. May include arguments, e.g. \"go run ./cmd/bindiff\".")
 	flag.Float64Var(&cfg.tolBytes, "tol-bytes", 8, "Ignore B/op changes smaller than this many bytes. Allocation counts and binary sizes are always exact.")
@@ -92,8 +87,8 @@ func run() error {
 		flag.Usage()
 		return errors.New("-base is required")
 	}
-	if cfg.benchPattern == "" && len(toolchains(cfg)) == 0 {
-		return errors.New("nothing to measure: -bench is empty and no toolchain has targets")
+	if cfg.benchPattern == "" && cfg.targets == "" && cfg.targetsJSON == "" {
+		return errors.New("nothing to measure: -bench, -targets and -targets-json are all empty")
 	}
 
 	sections, growths, err := measure(cfg)
@@ -115,30 +110,41 @@ func run() error {
 		return err
 	}
 
-	// The budget is applied per toolchain rather than to the sum: a flash budget
+	// The budget is applied per target rather than to the sum: a flash budget
 	// and a host binary's download size are different limits that happen to be
 	// spelled with the same flag, and adding them together would gate on a
 	// number that means nothing.
 	for _, g := range growths {
 		if cfg.failOnGrowth >= 0 && g.bytes > cfg.failOnGrowth {
-			return fmt.Errorf("%s binary size grew by %d bytes, over the %d byte budget", g.toolchain, g.bytes, cfg.failOnGrowth)
+			return fmt.Errorf("%s grew by %d bytes, over the %d byte budget", g.target, g.bytes, cfg.failOnGrowth)
 		}
 	}
 	return nil
 }
 
-// growth is how much one toolchain's binaries grew in total, which is what the
-// -fail-on-growth budget applies to.
+// growth is how much one target grew, which is what -fail-on-growth applies to.
 type growth struct {
-	toolchain string
-	bytes     int64
+	target string
+	bytes  int64
 }
 
 // measure runs both halves and returns the report sections along with each
-// toolchain's total binary growth.
+// target's binary growth.
 func measure(cfg config) (sections []section, growths []growth, err error) {
-	if tcs := toolchains(cfg); len(tcs) > 0 {
-		s, g, err := measureSize(cfg, tcs)
+	if cfg.targets != "" || cfg.targetsJSON != "" {
+		// The sugar builds into this directory, and every target's base binary
+		// is stashed here before the head build overwrites it.
+		dir, err := os.MkdirTemp("", "memci")
+		if err != nil {
+			return nil, nil, err
+		}
+		defer os.RemoveAll(dir)
+
+		targets, err := targetsFor(cfg, dir)
+		if err != nil {
+			return nil, nil, err
+		}
+		s, g, err := measureSize(cfg, targets, dir)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -153,6 +159,53 @@ func measure(cfg config) (sections []section, growths []growth, err error) {
 		sections = append(sections, s...)
 	}
 	return sections, growths, nil
+}
+
+// targetsFor assembles the build list from both spellings. The sugar comes
+// first so that -targets and -targets-json can be combined.
+func targetsFor(cfg config, outDir string) ([]target, error) {
+	var out []target
+	if cfg.targets != "" {
+		sugar, err := sugarTargets(cfg, outDir)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, sugar...)
+	}
+	if cfg.targetsJSON != "" {
+		raw, err := loadBuilds(cfg)
+		if err != nil {
+			return nil, err
+		}
+		explicit, err := parseTargets(raw)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, explicit...)
+	}
+	return out, uniqueNames(out)
+}
+
+// loadBuilds returns the build list JSON, read from a file when -targets-json
+// names one rather than carrying the document inline.
+//
+// The path resolves against the head checkout, so the list travels with the
+// code: a PR that adds a command adds its target in the same commit, and both
+// revisions are then built the way that PR asks for.
+func loadBuilds(cfg config) (string, error) {
+	spec := strings.TrimSpace(cfg.targetsJSON)
+	if strings.HasPrefix(spec, "[") || !strings.HasSuffix(spec, ".json") {
+		return spec, nil
+	}
+	path := spec
+	if !filepath.IsAbs(path) {
+		path = filepath.Join(cfg.headDir, path)
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return "", fmt.Errorf("reading the build list: %w", err)
+	}
+	return string(b), nil
 }
 
 // measureBench benchmarks both revisions and builds the allocation tables.
@@ -252,98 +305,73 @@ func allocHeadline(allocRows, byteRows []Row) string {
 	return fmt.Sprintf("Allocations %s across %s.", strings.Join(parts, ", "), across)
 }
 
-// measureSize builds each target on both revisions with every toolchain and
-// diffs the results with bindiff.
-func measureSize(cfg config, tcs []toolchain) (section, []growth, error) {
-	dir, err := os.MkdirTemp("", "memci")
-	if err != nil {
-		return section{}, nil, err
+// measureSize builds each target on both revisions and diffs the results with
+// bindiff.
+func measureSize(cfg config, targets []target, dir string) (section, []growth, error) {
+	if len(targets) == 0 {
+		return section{}, nil, errors.New("no targets to build")
 	}
-	defer os.RemoveAll(dir)
-
 	var sec section
 	var growths []growth
-	var totalRows []Row // One per binary and toolchain, for the side by side table.
-	// The headline names binaries when there is one toolchain and toolchains
-	// when there are several; either way it is the sentence someone reads
-	// instead of the tables.
+	var totalRows []Row // One per target, for the totals table.
 	var summaries []string
-	binaries := make(map[string]bool)
-	for _, tc := range tcs {
-		targets, err := mainPackages(cfg, tc)
+	for i, t := range targets {
+		if err := build(cfg, t, cfg.baseDir); err != nil {
+			return section{}, nil, fmt.Errorf("building %s at %s: %w", t.Name, cfg.baseRef, err)
+		}
+		basePath := filepath.Join(dir, fmt.Sprintf("base-%d-%s", i, filepath.Base(t.ELF)))
+		if err := stash(t.elfPath(cfg.baseDir), basePath); err != nil {
+			return section{}, nil, fmt.Errorf("%s at %s: %w", t.Name, cfg.baseRef, err)
+		}
+		if err := build(cfg, t, cfg.headDir); err != nil {
+			return section{}, nil, fmt.Errorf("building %s at %s: %w", t.Name, cfg.headRef, err)
+		}
+
+		raw, err := command(cfg, cfg.headDir, bindiffArgv(cfg, t, basePath, t.elfPath(cfg.headDir)))
+		if err != nil {
+			return section{}, nil, fmt.Errorf("diffing %s: %w", t.Name, err)
+		}
+		rows, sum, err := sizeRows(t.Name, raw)
 		if err != nil {
 			return section{}, nil, err
 		}
-		if len(targets) == 0 {
-			return section{}, nil, fmt.Errorf("no main packages matched %q for %s", tc.targets, tc.name)
+		growths = append(growths, growth{target: t.Name, bytes: sum.Delta})
+		if sum.Delta != 0 {
+			summaries = append(summaries, fmt.Sprintf("`%s` %s", t.Name, signedBy(float64(sum.Delta), humanBytes)))
 		}
+		totalRows = append(totalRows, Row{
+			Name: t.Name, Unit: "bytes",
+			Base: float64(sum.Old), Head: float64(sum.New),
+			baseOK: sum.Old != 0, headOK: sum.New != 0,
+		})
 
-		var total int64
-		for _, target := range targets {
-			name := path.Base(target)
-			binaries[name] = true
-			basePath := filepath.Join(dir, tc.name+"-base-"+name)
-			headPath := filepath.Join(dir, tc.name+"-head-"+name)
-			if err := build(cfg, tc, cfg.baseDir, target, basePath); err != nil {
-				return section{}, nil, fmt.Errorf("building %s with %s at %s: %w", target, tc.name, cfg.baseRef, err)
-			}
-			if err := build(cfg, tc, cfg.headDir, target, headPath); err != nil {
-				return section{}, nil, fmt.Errorf("building %s with %s at %s: %w", target, tc.name, cfg.headRef, err)
-			}
-
-			raw, err := command(cfg, cfg.headDir, bindiffArgv(cfg, tc, basePath, headPath))
-			if err != nil {
-				return section{}, nil, fmt.Errorf("diffing %s built with %s: %w", target, tc.name, err)
-			}
-			rows, sum, err := sizeRows(name, raw)
-			if err != nil {
-				return section{}, nil, err
-			}
-			total += sum.Delta
-			if len(tcs) == 1 && sum.Delta != 0 {
-				summaries = append(summaries, fmt.Sprintf("`%s` %s", name, signedBy(float64(sum.Delta), humanBytes)))
-			}
-			totalRows = append(totalRows, Row{
-				Group: name, Name: tc.name, Unit: "bytes",
-				Base: float64(sum.Old), Head: float64(sum.New),
-				baseOK: sum.Old != 0, headOK: sum.New != 0,
-			})
-
-			rows = keep(rows, tolerance{})
-			sortRows(rows)
-			if len(rows) == 0 {
-				continue
-			}
-			shown, more := trim(rows, cfg.top)
-			sec.details = append(sec.details, table{
-				// The binary and the toolchain are named in the heading, so the
-				// rows need only name the unit of attribution.
-				heading: fmt.Sprintf("%s — %s", binaryLabel(name, tc, tcs), signedBy(float64(sum.Delta), humanBytes)),
-				item:    cfg.kind,
-				format:  humanBytes, rows: shown, omitted: more,
-			})
+		rows = keep(rows, tolerance{})
+		sortRows(rows)
+		if len(rows) == 0 {
+			continue
 		}
-		growths = append(growths, growth{toolchain: tc.name, bytes: total})
-		if len(tcs) > 1 && total != 0 {
-			summaries = append(summaries, fmt.Sprintf("%s %s", tc.name, signedBy(float64(total), humanBytes)))
-		}
+		shown, more := trim(rows, cfg.top)
+		sec.details = append(sec.details, table{
+			// The target is named in the heading and the build line below it, so
+			// the rows need only name the unit of attribution.
+			heading: fmt.Sprintf("%s — %s", t.Name, signedBy(float64(sum.Delta), humanBytes)),
+			note:    commandNote(t),
+			item:    cfg.kind,
+			format:  humanBytes, rows: shown, omitted: more,
+		})
 	}
 
-	sec.scope = quantity(len(binaries), "binary", "binaries")
+	sec.scope = quantity(len(targets), "binary", "binaries")
 	switch {
 	case len(summaries) == 0:
 		sec.headline = "Binary size unchanged."
-	case len(tcs) == 1:
-		sec.headline = fmt.Sprintf("Binary size %s: %s.", signedBy(float64(growths[0].bytes), humanBytes), strings.Join(summaries, ", "))
+	case len(targets) == 1:
+		sec.headline = fmt.Sprintf("Binary size %s.", signedBy(float64(growths[0].bytes), humanBytes))
 	default:
 		sec.headline = fmt.Sprintf("Binary size: %s.", strings.Join(summaries, ", "))
 	}
-	// With one toolchain the totals are already in the headline; the table earns
-	// its space only when there is a second number to hold against the first.
-	if len(tcs) > 1 {
-		if t, ok := sideBySide(totalRows, tcs); ok {
-			sec.tables = append(sec.tables, t)
-		}
+	if t, ok := totalsTable(totalRows, targets); ok {
+		sec.tables = append(sec.tables, t)
 	}
 	sec.detailsSummary = fmt.Sprintf("Breakdown by %s", cfg.kind)
 	return sec, growths, nil
@@ -359,18 +387,13 @@ func quantity(n int, singular, plural string) string {
 	return fmt.Sprintf("%d %s", n, plural)
 }
 
-// mainPackages expands a toolchain's target patterns to the main packages they
-// match. Only packages present on both revisions are compared; a binary that
-// exists on only one side has nothing to diff against.
-//
-// The list comes from `go list` even for TinyGo: the module is the same one,
-// and a package that go list resolves but tinygo cannot build is better
-// reported as a build failure than silently skipped. -tinygo-targets is how a
-// repo narrows the set to the commands that are meant to cross-compile.
-func mainPackages(cfg config, tc toolchain) ([]string, error) {
+// mainPackages expands the -targets patterns to the main packages they match.
+// Only packages present on both revisions are compared; a binary that exists on
+// only one side has nothing to diff against.
+func mainPackages(cfg config) ([]string, error) {
 	list := func(dir string) (map[string]bool, error) {
 		args := append([]string{"list", "-f", "{{if eq .Name \"main\"}}{{.ImportPath}}{{end}}"},
-			strings.Split(tc.targets, ",")...)
+			strings.Split(cfg.targets, ",")...)
 		out, err := goCmd(cfg, dir, args...)
 		if err != nil {
 			return nil, err

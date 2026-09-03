@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -43,8 +44,8 @@ func TestEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(growths) != 1 || growths[0].toolchain != "go" {
-		t.Fatalf("growths = %v, want one go entry", growths)
+	if len(growths) != 1 || growths[0].target != "httpsrvfixture" {
+		t.Fatalf("growths = %v, want one httpsrvfixture entry", growths)
 	}
 	if growths[0].bytes <= 0 {
 		t.Errorf("growth = %d bytes; head links in encoding/json so it must be larger", growths[0].bytes)
@@ -67,10 +68,14 @@ func TestEndToEnd(t *testing.T) {
 			t.Errorf("report is missing %q:\n%s", want, got)
 		}
 	}
-	// With one toolchain there is nothing to hold the totals against, so the
-	// side by side table must not appear.
+	// With one target there is nothing to hold the total against, so the totals
+	// table must not appear.
 	if strings.Contains(got, "**Totals**") {
-		t.Errorf("a single toolchain produced a totals table:\n%s", got)
+		t.Errorf("a single target produced a totals table:\n%s", got)
+	}
+	// The build line is the report's record of exactly what was measured.
+	if !strings.Contains(got, "`go build -trimpath -buildvcs=false") {
+		t.Errorf("report does not show the build command:\n%s", got)
 	}
 
 	// BenchmarkStable is byte for byte identical on both sides. If it shows up,
@@ -107,31 +112,32 @@ func TestEndToEndNoChange(t *testing.T) {
 	}
 }
 
-// TestEndToEndTinyGo builds the same fixture with both toolchains and checks
-// the two totals end up next to each other.
-//
-// TinyGo is slow -- around half a minute per build, so two minutes for the four
-// here -- and is not needed by the rest of the suite, so this runs only when a
-// tinygo is actually present.
-func TestEndToEndTinyGo(t *testing.T) {
+// TestEndToEndJSONTargets builds the same package twice under different flags,
+// which is what the JSON target list exists for, and checks the two land side
+// by side with the command that produced each.
+func TestEndToEndJSONTargets(t *testing.T) {
 	if testing.Short() {
-		t.Skip("end to end test builds two checkouts with two toolchains")
+		t.Skip("end to end test builds two checkouts twice over")
 	}
-	tinygo := findTinyGo(t)
 	cfg := fixtureConfig(t)
-	cfg.tinygo = tinygo
-	cfg.benchPattern = "" // Benchmarks are a go-only measurement; skip them here.
+	cfg.targets = ""      // Only the explicit list below.
+	cfg.benchPattern = "" // Benchmarks are unaffected by targets; skip them here.
+	cfg.targetsJSON = `[
+		{"name": "plain", "build": "go build -trimpath -buildvcs=false -o plain.elf .", "elf": "plain.elf"},
+		{"name": "stripped", "build": "go build -trimpath -buildvcs=false -ldflags=-w -o stripped.elf .", "elf": "stripped.elf", "mem": true}
+	]`
+	cleanELFs(t, cfg, "plain.elf", "stripped.elf")
 
 	sections, growths, err := measure(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(growths) != 2 || growths[0].toolchain != "go" || growths[1].toolchain != "tinygo" {
-		t.Fatalf("growths = %v, want go then tinygo", growths)
+	if len(growths) != 2 || growths[0].target != "plain" || growths[1].target != "stripped" {
+		t.Fatalf("growths = %v, want plain then stripped in listed order", growths)
 	}
 	for _, g := range growths {
 		if g.bytes <= 0 {
-			t.Errorf("%s growth = %d bytes; head links in encoding/json so it must be larger", g.toolchain, g.bytes)
+			t.Errorf("%s growth = %d bytes; head links in encoding/json so it must be larger", g.target, g.bytes)
 		}
 	}
 
@@ -143,19 +149,41 @@ func TestEndToEndTinyGo(t *testing.T) {
 	t.Log("\n" + got)
 
 	for _, want := range []string{
-		"**Totals**",
-		"| httpsrvfixture | go |",     // The two toolchains are rows of one table,
-		"| httpsrvfixture | tinygo |", // adjacent, which is the point of it.
-		"loadable image plus `.bss`",  // And the table says what it is counting.
-		"httpsrvfixture (go) —",       // Detail tables are qualified once there are two.
-		"httpsrvfixture (tinygo) —",
-		"Binary size: go +", "tinygo +", // The headline carries both totals.
+		"**Totals**",                // Two targets earn the side by side table,
+		"| plain |", "| stripped |", // one row each.
+		"loadable image plus `.bss`",                                         // Which says what it is counting, since they differ.
+		"`go build -trimpath -buildvcs=false -ldflags=-w -o stripped.elf .`", // The exact build line.
+		"Binary size: `plain` +",                                             // The headline carries both.
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("report is missing %q:\n%s", want, got)
 		}
 	}
 	assertRectangular(t, got)
+}
+
+// TestJSONTargetsBuildInBothCheckouts pins the trap the two builds share: they
+// run the same command, so the head build must not land on the base binary
+// before bindiff has read it.
+func TestJSONTargetsBuildInBothCheckouts(t *testing.T) {
+	if testing.Short() {
+		t.Skip("end to end test builds two checkouts")
+	}
+	cfg := fixtureConfig(t)
+	cfg.targets = ""
+	cfg.benchPattern = ""
+	cfg.targetsJSON = `[{"name": "srv", "build": "go build -trimpath -buildvcs=false -o srv.elf .", "elf": "srv.elf"}]`
+	cleanELFs(t, cfg, "srv.elf")
+
+	_, growths, err := measure(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// If the head build had overwritten the base one, the diff would be of a
+	// binary against itself and report no change at all.
+	if len(growths) != 1 || growths[0].bytes == 0 {
+		t.Fatalf("growths = %v; the two checkouts differ so the size must too", growths)
+	}
 }
 
 func findBindiff(t *testing.T) string {
@@ -170,14 +198,15 @@ func findBindiff(t *testing.T) string {
 	return path
 }
 
-func findTinyGo(t *testing.T) string {
+// cleanELFs removes binaries a build command left in the fixture checkouts. In
+// CI the checkout is disposable; the fixture directories are not.
+func cleanELFs(t *testing.T, cfg config, names ...string) {
 	t.Helper()
-	if cmd := os.Getenv("MEMCI_TINYGO"); cmd != "" {
-		return cmd
-	}
-	path, err := exec.LookPath("tinygo")
-	if err != nil {
-		t.Skip("tinygo not found; set MEMCI_TINYGO or install tinygo")
-	}
-	return path
+	t.Cleanup(func() {
+		for _, dir := range []string{cfg.baseDir, cfg.headDir} {
+			for _, name := range names {
+				os.Remove(filepath.Join(dir, name))
+			}
+		}
+	})
 }

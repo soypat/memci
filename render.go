@@ -62,7 +62,7 @@ func reportTitle(title, headRef, baseRef string) (string, string) {
 // one each push.
 func render(w io.Writer, marker, title, subtitle string, sections []section) error {
 	var b strings.Builder
-	fmt.Fprintf(&b, "%s\n\n# %s\n\n", marker, title)
+	fmt.Fprintf(&b, "%s\n\n## %s\n\n", marker, title)
 	if subtitle != "" {
 		fmt.Fprintf(&b, "%s\n\n", subtitle)
 	}
