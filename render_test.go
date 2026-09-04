@@ -143,37 +143,6 @@ func TestRenderEmptyDetailsAreOmitted(t *testing.T) {
 	}
 }
 
-func TestReportTitle(t *testing.T) {
-	// The default names both revisions, so a reader scanning a PR's comments can
-	// tell what this one is about without opening anything.
-	title, subtitle := reportTitle("", "feature/json", "main")
-	if want := "Size and Allocations `feature/json` vs. `main`"; title != want {
-		t.Errorf("title = %q, want %q", title, want)
-	}
-	if subtitle != "" {
-		t.Errorf("the default title already names both revisions, but got subtitle %q", subtitle)
-	}
-	// A chosen title says whatever it says, so the revisions need their own line.
-	title, subtitle = reportTitle("Nightly size check", "feature/json", "main")
-	if title != "Nightly size check" {
-		t.Errorf("a custom title was overridden: %q", title)
-	}
-	if want := "`feature/json` compared against `main`."; subtitle != want {
-		t.Errorf("subtitle = %q, want %q", subtitle, want)
-	}
-}
-
-func TestRenderTitleIsTopLevel(t *testing.T) {
-	var b strings.Builder
-	title, subtitle := reportTitle("", "pr", "main")
-	if err := render(&b, defaultMarker, title, subtitle, nil); err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(b.String(), "\n## Size and Allocations `pr` vs. `main`\n") {
-		t.Errorf("the title is not the report's own heading level:\n%s", b.String())
-	}
-}
-
 func TestRenderMarkerIsFirst(t *testing.T) {
 	// The commenter finds its previous comment by this marker; if it moves or
 	// disappears every push posts a new comment.

@@ -54,7 +54,7 @@ func reportTitle(title, headRef, baseRef string) (string, string) {
 	if title != "" {
 		return title, fmt.Sprintf("`%s` compared against `%s`.", headRef, baseRef)
 	}
-	return fmt.Sprintf("Size and Allocations `%s` vs. `%s`", headRef, baseRef), ""
+	return fmt.Sprintf("[memci](https://github.com/soypat/memci) size/alloc report `%s` vs. `%s`", headRef, baseRef), ""
 }
 
 // render writes the whole Markdown report. marker is an HTML comment that lets
