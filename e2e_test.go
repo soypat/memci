@@ -151,7 +151,8 @@ func TestEndToEndJSONTargets(t *testing.T) {
 	for _, want := range []string{
 		"**Totals**",                // Two targets earn the side by side table,
 		"| plain |", "| stripped |", // one row each.
-		"loadable image plus `.bss`",                                         // Which says what it is counting, since they differ.
+		"| stripped | `-mem` |",                                              // Which says what it is counting, since they differ.
+		"_`-mem`: counts only the loadable image and `.bss`",                 // And what that means.
 		"`go build -trimpath -buildvcs=false -ldflags=-w -o stripped.elf .`", // The exact build line.
 		"Binary size: `plain` +",                                             // The headline carries both.
 	} {

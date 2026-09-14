@@ -175,30 +175,31 @@ func totalsTable(rows []Row, targets []target) (table, bool) {
 		return table{}, false
 	}
 	sortRows(rows)
-	return table{
-		heading: "Totals", note: basisNote(targets),
-		item:   "target",
-		format: humanBytes, rows: rows,
-	}, true
-}
-
-// basisNote says what the totals are counting when the targets do not all count
-// the same thing. Putting a file's bytes next to a loadable image is fine as
-// long as the table admits that is what it is doing.
-func basisNote(targets []target) string {
-	var file, mem []string
-	for _, t := range targets {
-		if t.Mem {
-			mem = append(mem, "`"+t.Name+"`")
-		} else {
-			file = append(file, "`"+t.Name+"`")
+	tbl := table{
+		heading: "Totals",
+		item:    "target",
+		format:  humanBytes, rows: rows,
+	}
+	// Putting a file's bytes next to a loadable image is fine as long as the
+	// table admits that is what it is doing. The flags say which row counts
+	// what, and the footer says what the flags mean.
+	for _, r := range rows {
+		if r.Flags != "" {
+			tbl.flags = "flags"
+			tbl.footer = "_`-mem`: counts only the loadable image and `.bss`, usually used for firmware images._"
+			break
 		}
 	}
-	if len(file) == 0 || len(mem) == 0 {
-		return ""
+	return tbl, true
+}
+
+// targetFlags lists the memci flags a target was measured with, as shown in the
+// totals table.
+func targetFlags(t target) string {
+	if t.Mem {
+		return "`-mem`"
 	}
-	return fmt.Sprintf("_%s counts the bytes of the file; %s counts the loadable image plus `.bss`, which is what has to fit on the device._",
-		strings.Join(file, " and "), strings.Join(mem, " and "))
+	return ""
 }
 
 // commandNote is the build line shown under a target's detail table. Reporting

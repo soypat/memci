@@ -4,20 +4,45 @@ Reports what a pull request did to your **benchmark allocations** and your
 **binary size**, and nothing else. Rows that did not move are dropped, so an
 empty report means nothing got worse.
 
-```
-# Size and Allocations `add-json-encoding` vs. `main`
+---
 
-Binary size +258.52 KiB: `httpsrv` +258.52 KiB. Allocations +1 allocs/op, +72 B/op across 1 benchmark.
+## [memci](https://github.com/soypat/memci) size/alloc report `add-json-encoding` vs. `main`
+
+Binary size: `httpsrv` +258.52 KiB, `httpsrv-mem` +184.92 KiB. Allocations +1 allocs/op, +72 B/op across 1 benchmark.
+
+**Totals**
+
+| target | flags | base | head | Δ |  |
+| --- | --- | ---: | ---: | ---: | ---: |
+| httpsrv |  | 8.01 MiB | 8.26 MiB | +258.52 KiB | +3.2% |
+| httpsrv-mem | `-mem` | 37.79 MiB | 37.97 MiB | +184.92 KiB | +0.5% |
+
+_`-mem`: counts only the loadable image and `.bss`, usually used for firmware images._
 
 <details>
 <summary>Breakdown by package</summary>
 
 **httpsrv — +258.52 KiB**
 
+`go build -trimpath -buildvcs=false -o httpsrv.elf .`
+
 | package | base | head | Δ |  |
 | --- | ---: | ---: | ---: | ---: |
+| [unattributed] | 4.96 MiB | 5.11 MiB | +147.45 KiB | +2.9% |
 | encoding/json | — | 57.71 KiB | +57.71 KiB | new |
-| slices | 68.01 KiB | 101.46 KiB | +33.45 KiB | +49.2% |
+
+_22 smaller change(s) not shown._
+
+**httpsrv-mem — +184.92 KiB**
+
+`go build -trimpath -buildvcs=false -o mem.elf .`
+
+| package | base | head | Δ |  |
+| --- | ---: | ---: | ---: | ---: |
+| [unattributed] | 2.49 MiB | 2.56 MiB | +73.67 KiB | +2.9% |
+| encoding/json | — | 57.86 KiB | +57.86 KiB | new |
+
+_22 smaller change(s) not shown._
 
 </details>
 
@@ -26,12 +51,21 @@ Binary size +258.52 KiB: `httpsrv` +258.52 KiB. Allocations +1 allocs/op, +72 B/
 | Package | Benchmark | base | head | Δ |  |
 | --- | --- | ---: | ---: | ---: | ---: |
 | . | BenchmarkGreet | 1 | 2 | +1 | +100.0% |
-```
+
+**B/op**
+
+_Changes below 8 bytes or 1% are omitted as measurement noise._
+
+| Package | Benchmark | base | head | Δ |  |
+| --- | --- | ---: | ---: | ---: | ---: |
+| . | BenchmarkGreet | 16 | 88 | +72 | +450.0% |
+
+---
 
 When nothing moved, that is the whole comment:
 
 ```
-# Size and Allocations `add-json-encoding` vs. `main`
+## [memci](https://github.com/soypat/memci) size/alloc report `add-json-encoding` vs. `main`
 
 No change across 1 binary and 12 benchmarks.
 ```

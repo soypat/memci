@@ -153,7 +153,7 @@ func TestCommandNote(t *testing.T) {
 func TestTotalsTable(t *testing.T) {
 	rows := []Row{
 		{Name: "host", Unit: "bytes", Base: 100, Head: 150, baseOK: true, headOK: true},
-		{Name: "fw", Unit: "bytes", Base: 100, Head: 90, baseOK: true, headOK: true},
+		{Name: "fw", Unit: "bytes", Flags: "`-mem`", Base: 100, Head: 90, baseOK: true, headOK: true},
 	}
 	targets := []target{{Name: "host"}, {Name: "fw", Mem: true}}
 
@@ -170,9 +170,22 @@ func TestTotalsTable(t *testing.T) {
 	if tbl.rows[0].Name != "host" {
 		t.Errorf("rows not ordered by magnitude: %+v", tbl.rows)
 	}
-	if !strings.Contains(tbl.note, "`fw`") || !strings.Contains(tbl.note, "loadable image") {
-		t.Errorf("the note does not say the two rows count different things: %q", tbl.note)
+	if tbl.flags == "" || !strings.Contains(tbl.footer, "`-mem`") {
+		t.Errorf("the table does not say the two rows count different things: flags %q, footer %q", tbl.flags, tbl.footer)
 	}
+	var b strings.Builder
+	tbl.render(&b)
+	got := b.String()
+	for _, want := range []string{"| target | flags |", "| host |  |", "| fw | `-mem` |"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q in:\n%s", want, got)
+		}
+	}
+	// The table comes first; the explanation of its flags follows it.
+	if strings.Index(got, "| target |") > strings.Index(got, "loadable image") {
+		t.Errorf("the flags footnote is above the table:\n%s", got)
+	}
+	assertRectangular(t, got)
 }
 
 func TestTotalsTableDropsUnchangedTargets(t *testing.T) {
@@ -186,13 +199,15 @@ func TestTotalsTableDropsUnchangedTargets(t *testing.T) {
 	}
 }
 
-func TestBasisNote(t *testing.T) {
-	// With every target measured the same way there is nothing to disclaim.
-	if got := basisNote([]target{{Name: "a"}, {Name: "b"}}); got != "" {
-		t.Errorf("uniform targets produced a note: %q", got)
+func TestTotalsTableWithoutFlags(t *testing.T) {
+	// With no flags in play there is nothing to put in the column or explain.
+	rows := []Row{
+		{Name: "a", Unit: "bytes", Base: 100, Head: 150, baseOK: true, headOK: true},
+		{Name: "b", Unit: "bytes", Base: 100, Head: 90, baseOK: true, headOK: true},
 	}
-	if got := basisNote([]target{{Name: "a", Mem: true}, {Name: "b", Mem: true}}); got != "" {
-		t.Errorf("uniform mem targets produced a note: %q", got)
+	tbl, _ := totalsTable(rows, []target{{Name: "a"}, {Name: "b"}})
+	if tbl.flags != "" || tbl.footer != "" {
+		t.Errorf("targets without flags produced a flags column or footer: %q, %q", tbl.flags, tbl.footer)
 	}
 }
 
