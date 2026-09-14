@@ -2,7 +2,7 @@
 
 Reports what a pull request did to your **benchmark allocations** and your
 **binary size**, and nothing else. Rows that did not move are dropped, so an
-empty report means nothing got worse.
+empty report means nothing got worse. Below is an example memci comment on a PR (between the horizontal lines):
 
 ---
 
