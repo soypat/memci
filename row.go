@@ -21,6 +21,7 @@ type Row struct {
 	Unit  string  // "B/op", "allocs/op" or "bytes".
 	Base  float64 // Quantity on the base revision. Zero means absent.
 	Head  float64 // Quantity on the head revision. Zero means absent.
+	Flags string  // memci flags the quantity was measured with, e.g. "-mem". Usually empty.
 
 	// baseOK and headOK distinguish "measured as zero" from "not measured at
 	// all", so a benchmark that only exists on one side reads as added or

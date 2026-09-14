@@ -340,7 +340,7 @@ func measureSize(cfg config, targets []target, dir string) (section, []growth, e
 			summaries = append(summaries, fmt.Sprintf("`%s` %s", t.Name, signedBy(float64(sum.Delta), humanBytes)))
 		}
 		totalRows = append(totalRows, Row{
-			Name: t.Name, Unit: "bytes",
+			Name: t.Name, Unit: "bytes", Flags: targetFlags(t),
 			Base: float64(sum.Old), Head: float64(sum.New),
 			baseOK: sum.Old != 0, headOK: sum.New != 0,
 		})
@@ -348,6 +348,9 @@ func measureSize(cfg config, targets []target, dir string) (section, []growth, e
 		rows = keep(rows, tolerance{})
 		sortRows(rows)
 		if len(rows) == 0 {
+			if sum.Delta == 0 {
+				sec.unchanged = append(sec.unchanged, t.Name)
+			}
 			continue
 		}
 		shown, more := trim(rows, cfg.top)

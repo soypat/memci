@@ -14,9 +14,11 @@ type table struct {
 	note    string
 	group   string // Header for the grouping column. Empty omits the column.
 	item    string // Header for the item column.
+	flags   string // Header for a column of each row's Flags. Empty omits the column.
 	format  func(float64) string
 	rows    []Row
-	omitted int // Rows trimmed by -top, mentioned in a footer so the trim is visible.
+	omitted int    // Rows trimmed by -top, mentioned in a footer so the trim is visible.
+	footer  string // Printed under the table, e.g. to explain the flags column.
 }
 
 // section holds the tables for one half of the report plus the sentence that
@@ -41,6 +43,10 @@ type section struct {
 	// it. Everything is still there, one click down.
 	details        []table
 	detailsSummary string
+	// unchanged names the items that were measured and did not move. They are
+	// listed at the end of the breakdown so a reader scanning it for their binary
+	// can tell it was measured rather than forgotten.
+	unchanged []string
 }
 
 // reportTitle names the report and, when the name does not already say it, the
@@ -111,6 +117,11 @@ func (s section) render(b *strings.Builder) {
 	}
 	b.WriteString(body.String())
 	if folded.Len() > 0 {
+		// Only alongside a breakdown: when nothing moved at all the report's
+		// opening line already says so.
+		if len(s.unchanged) > 0 {
+			fmt.Fprintf(&folded, "**%s — no change**\n\n", strings.Join(s.unchanged, ", "))
+		}
 		summary := s.detailsSummary
 		if summary == "" {
 			summary = "Breakdown"
@@ -136,6 +147,10 @@ func (t table) render(b *strings.Builder) {
 	// case for a size table: the binary is already named in the heading.
 	header := []string{t.item, "base", "head", "Δ", ""}
 	align := []string{"---", "---:", "---:", "---:", "---:"}
+	if t.flags != "" {
+		header = append([]string{t.item, t.flags}, header[1:]...)
+		align = append([]string{"---", "---"}, align[1:]...)
+	}
 	if t.group != "" {
 		header = append([]string{t.group}, header...)
 		align = append([]string{"---"}, align...)
@@ -148,6 +163,9 @@ func (t table) render(b *strings.Builder) {
 			t.side(r.Base, r.baseOK), t.side(r.Head, r.headOK),
 			signedBy(r.Delta(), t.format), percent(r),
 		}
+		if t.flags != "" {
+			cells = append([]string{cells[0], escapePipes(r.Flags)}, cells[1:]...)
+		}
 		if t.group != "" {
 			cells = append([]string{escapePipes(r.Group)}, cells...)
 		}
@@ -155,6 +173,9 @@ func (t table) render(b *strings.Builder) {
 	}
 	if t.omitted > 0 {
 		fmt.Fprintf(b, "\n_%d smaller change(s) not shown._\n", t.omitted)
+	}
+	if t.footer != "" {
+		fmt.Fprintf(b, "\n%s\n", t.footer)
 	}
 	b.WriteString("\n")
 }
