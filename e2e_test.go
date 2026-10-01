@@ -187,6 +187,51 @@ func TestJSONTargetsBuildInBothCheckouts(t *testing.T) {
 	}
 }
 
+// TestJSONTargetsUnflaggedWorktree reproduces the action's layout: head is a
+// clone, base a git worktree at a path of different length, and the build
+// command passes neither -trimpath nor -buildvcs=false. Identical source must
+// still measure identical, or every PR carries a phantom +160 B in "go" and
+// "runtime" from the VCS stamp only the head gets.
+func TestJSONTargetsUnflaggedWorktree(t *testing.T) {
+	if testing.Short() {
+		t.Skip("end to end test builds two checkouts")
+	}
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not found")
+	}
+	cfg := fixtureConfig(t)
+	cfg.targets = ""
+	cfg.benchPattern = ""
+	cfg.targetsJSON = `[{"name": "srv", "build": "go build -o srv.elf .", "elf": "srv.elf"}]`
+
+	tmp := t.TempDir()
+	cfg.headDir = filepath.Join(tmp, "head")
+	cfg.baseDir = filepath.Join(tmp, "_temp", "base")
+	if err := os.CopyFS(cfg.headDir, os.DirFS("testdata/httpsrv/base")); err != nil {
+		t.Fatal(err)
+	}
+	git := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-c", "user.name=memci", "-c", "user.email=memci@example.com"}, args...)...)
+		cmd.Dir = cfg.headDir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	git("init", "-q", ".")
+	git("add", "-A")
+	git("commit", "-qm", "base")
+	git("worktree", "add", "-q", "--detach", cfg.baseDir, "HEAD")
+
+	_, growths, err := measure(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(growths) != 1 || growths[0].bytes != 0 {
+		t.Fatalf("growths = %v; same commit in a clone and a worktree must build identical", growths)
+	}
+}
+
 func findBindiff(t *testing.T) string {
 	t.Helper()
 	if cmd := os.Getenv("MEMCI_BINDIFF"); cmd != "" {

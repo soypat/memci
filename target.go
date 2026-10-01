@@ -128,8 +128,27 @@ func (t target) elfPath(dir string) string {
 // build runs a target's build command in one checkout. It goes through a shell
 // so it can be written the way it would be typed.
 func build(cfg config, t target, dir string) error {
-	_, err := command(cfg, dir, []string{"sh", "-c", t.Build})
+	_, err := commandEnv(cfg, dir, []string{"sh", "-c", t.Build}, []string{buildGOFLAGS()})
 	return err
+}
+
+// buildGOFLAGS returns the GOFLAGS every build runs with. The checkouts differ
+// in two ways unrelated to the change, and both reach the binary:
+//   - Directory: absolute source paths land in .gopclntab and DWARF, so paths
+//     of different lengths shift the size.
+//   - VCS stamp: the base is a git worktree, whose .git is a file, and cmd/go
+//     only takes a .git directory as a repo root. The head gets vcs.* build
+//     settings and a pseudo-version the base lacks, and that text is stored
+//     twice (go:buildinfo and runtime.modinfo.str), about 320 bytes.
+//
+// The inherited GOFLAGS go last so the caller can still override these, and
+// flags in the build command itself override GOFLAGS altogether.
+func buildGOFLAGS() string {
+	flags := "-trimpath -buildvcs=false"
+	if inherited := os.Getenv("GOFLAGS"); inherited != "" {
+		flags += " " + inherited
+	}
+	return "GOFLAGS=" + flags
 }
 
 // stash copies a freshly built binary aside. Both sides run the same build

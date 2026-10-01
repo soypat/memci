@@ -99,7 +99,7 @@ was measured is never in doubt:
 ```json
 [
   {"name": "cli",
-   "build": "go build -trimpath -buildvcs=false -o cli.elf ./cmd/cli",
+   "build": "go build -o cli.elf ./cmd/cli",
    "elf": "cli.elf"},
   {"name": "firmware",
    "build": "tinygo build -o fw.elf -target=pico -opt=z ./cmd/fw",
@@ -114,11 +114,11 @@ A change that is free in a host binary can be expensive on a microcontroller,
 one interface method that drags a reflect path into the firmware, and no single
 build stands in for both.
 
-`-targets ./cmd/...` is shorthand for one host build per main package, with
-`-trimpath -buildvcs=false` already applied. Spell the command out and those
-flags are yours to pass: they remove the two things that otherwise differ
-between the checkouts for reasons unrelated to the change — the directory the
-build ran in, and the stamped commit.
+`-targets ./cmd/...` is shorthand for one host build per main package.
+
+Every build runs with `GOFLAGS=-trimpath -buildvcs=false`, ahead of any
+`GOFLAGS` already set, so the checkout path and stamped commit never show up as
+a size change.
 
 `mem` picks what a target counts. By default it is the **bytes of the file**,
 which is what ships; a binary's `.bss` is a virtual reservation nobody pays for,
@@ -234,7 +234,7 @@ jobs:
           targets: |
             [
               {"name": "cli",
-               "build": "go build -trimpath -buildvcs=false -o cli.elf ./cmd/cli",
+               "build": "go build -o cli.elf ./cmd/cli",
                "elf": "cli.elf"},
               {"name": "firmware",
                "build": "tinygo build -o fw.elf -target=pico ./cmd/fw",

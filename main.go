@@ -450,11 +450,20 @@ func goCmd(cfg config, dir string, args ...string) ([]byte, error) {
 // passed through so that build failures and go test diagnostics land in the CI
 // log where someone can read them.
 func command(cfg config, dir string, argv []string) ([]byte, error) {
+	return commandEnv(cfg, dir, argv, nil)
+}
+
+// commandEnv is command with extra environment variables, which take precedence
+// over the inherited ones.
+func commandEnv(cfg config, dir string, argv, env []string) ([]byte, error) {
 	if cfg.verbose {
 		fmt.Fprintf(os.Stderr, "memci: (%s) %s\n", dir, strings.Join(argv, " "))
 	}
 	cmd := exec.Command(argv[0], argv[1:]...)
 	cmd.Dir = dir
+	if env != nil {
+		cmd.Env = append(os.Environ(), env...)
+	}
 	cmd.Stderr = os.Stderr
 	out, err := cmd.Output()
 	if err != nil {
