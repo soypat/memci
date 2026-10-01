@@ -35,9 +35,31 @@ runs:
         ARGS: ${{ inputs.args }}
         BINDIFF: ${{ inputs.bindiff }}
         TARGETS: ${{ inputs.targets }}
+        PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
       run: |
         set -euo pipefail
-        git fetch --no-tags --depth=1 origin "+refs/heads/${BASE}:refs/memci/base"
+        # On pull_request the checkout is GitHub's test merge of the PR into the
+        # base as it stood when the event fired. Measure against that merge's
+        # first parent, not the branch tip: a re-run replays the old merge, and a
+        # newer tip would charge everything merged since to this PR, sign flipped.
+        # Raw cat-file because a shallow checkout hides parents from rev-parse.
+        # The parents must be exactly (base, PR head) and HEAD must be GITHUB_SHA,
+        # or a checkout of head.sha whose last commit merged main into the branch
+        # would pass for the test merge and be measured against its own parent.
+        BASE_LABEL="${BASE}"
+        parents=()
+        if [ "${GITHUB_EVENT_NAME}" = pull_request ] && [ "$(git rev-parse HEAD)" = "${GITHUB_SHA}" ]; then
+          mapfile -t parents < <(git cat-file -p HEAD | awk '/^parent /{print $2} /^$/{exit}')
+        fi
+        if [ "${#parents[@]}" -eq 2 ] && [ "${parents[1]}" = "${PR_HEAD_SHA}" ] &&
+          git fetch --no-tags --depth=1 origin "+${parents[0]}:refs/memci/base"; then
+          BASE_LABEL="${BASE}@${parents[0]:0:7}"
+        else
+          if [ "${GITHUB_EVENT_NAME}" = pull_request ]; then
+            echo "::warning::checkout is not GitHub's merge of the PR; comparing against the tip of ${BASE}, which may include changes made after this PR's base"
+          fi
+          git fetch --no-tags --depth=1 origin "+refs/heads/${BASE}:refs/memci/base"
+        fi
         git worktree add --detach "${RUNNER_TEMP}/base" refs/memci/base
         # Build memci from this action's own checkout so the tool and the action
         # version cannot drift apart.
@@ -56,7 +78,7 @@ runs:
           TARGET_ARGS+=(-targets ./...)
         fi
         "${RUNNER_TEMP}/memci" -base "${RUNNER_TEMP}/base" \
-          -base-ref "${BASE}" -head-ref "${HEAD}" -bindiff "${BINDIFF}" \
+          -base-ref "${BASE_LABEL}" -head-ref "${HEAD}" -bindiff "${BINDIFF}" \
           ${TARGET_ARGS[@]+"${TARGET_ARGS[@]}"} \
           ${ARGS} -o "${RUNNER_TEMP}/memci-report.md"
 

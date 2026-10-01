@@ -84,7 +84,9 @@ It deliberately does not report `ns/op`. Timings measure the runner; `B/op`,
 Both revisions are built and benchmarked **in the same job, on the same runner,
 with the same toolchain**, by adding a `git worktree` for the base branch. There
 is no stored baseline to expire, to be missing on a first run, or to have been
-produced by a different Go version.
+produced by a different Go version. On a pull request the base is the first
+parent of GitHub's merge commit, so a re-run compares the same pair even after
+the base branch has moved.
 
 Binary size comes from [`bindiff`](https://github.com/soypat/tinyboot), which
 attributes every byte of an ELF to a segment, section, symbol, package, source
